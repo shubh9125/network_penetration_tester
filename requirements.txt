@@ -1,1 +1,5 @@
+# Required modules for the Network Penetration Testing System
+# Most of these are part of Python's standard library
+# Tkinter may need to be installed manually in some environments
+
 tk
