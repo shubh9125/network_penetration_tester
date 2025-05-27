@@ -3,17 +3,32 @@ from tkinter import messagebox, scrolledtext, simpledialog
 import socket
 import threading
 import ipaddress
-import subprocess
 import os
+from datetime import datetime
 
-# ---------- Scanner Logic (same as before) ----------
+# ---------- Global Data for Report ----------
+scan_results = []
+banner_results = []
+vulnerability_results = []
+password_checks = []
 
+# ---------- Core Functions ----------
 def scan_port(ip, port, results):
     try:
         s = socket.socket()
         s.settimeout(0.5)
         s.connect((ip, port))
-        results.append(f"[+] Port {port} is open on {ip}")
+        banner = banner_grab(ip, port)
+        result = f"[+] {ip}:{port} is open"
+        results.append(result)
+        scan_results.append(result)
+        if banner:
+            banner_info = f"[BANNER] {ip}:{port} => {banner}"
+            banner_results.append(banner_info)
+            vuln_info = detect_vulnerabilities(banner)
+            if vuln_info:
+                vuln_msg = f"[!] {ip}:{port} {vuln_info}"
+                vulnerability_results.append(vuln_msg)
         s.close()
     except:
         pass
@@ -23,11 +38,10 @@ def scan_ip_range_gui(network, output_text):
     try:
         net = ipaddress.ip_network(network, strict=False)
         for ip in net.hosts():
-            output_text.insert(tk.END, f"Scanning {ip}...\n")
-            output_text.see(tk.END)
+            output_text.insert(tk.END, f"\n[~] Scanning {ip}\n")
             output_text.update()
             threads = []
-            for port in range(1, 1025):
+            for port in range(1, 100):  # Faster scan limit
                 t = threading.Thread(target=scan_port, args=(str(ip), port, results))
                 threads.append(t)
                 t.start()
@@ -43,7 +57,7 @@ def banner_grab(ip, port):
         s = socket.socket()
         s.settimeout(1)
         s.connect((ip, port))
-        banner = s.recv(1024).decode().strip()
+        banner = s.recv(1024).decode(errors="ignore").strip()
         s.close()
         return banner
     except:
@@ -52,100 +66,104 @@ def banner_grab(ip, port):
 vuln_db = {
     "vsFTPd 2.3.4": "Backdoor vulnerability (CVE-2011-2523)",
     "Apache/2.2.8": "Multiple vulnerabilities (CVE-2009-3555)",
-    "OpenSSH 5.3": "Potential RCE risk"
+    "OpenSSH 5.3": "Potential RCE risk",
+    "Microsoft-IIS/6.0": "Buffer overflow vulnerability"
 }
 
 def detect_vulnerabilities(banner):
     for service, warning in vuln_db.items():
         if service in banner:
-            return f"[!] Vulnerability detected: {warning}"
-    return "[+] No known vulnerabilities."
+            return f"Vulnerability detected: {warning}"
+    return None
 
 weak_passwords = ["123456", "admin", "password", "letmein", "qwerty"]
 
 def check_password_strength(pw):
     if pw in weak_passwords:
-        return "[!] Weak password detected."
+        msg = "[!] Weak password detected."
     elif len(pw) < 8:
-        return "[!] Password too short."
+        msg = "[!] Password too short."
     else:
-        return "[+] Password strength acceptable."
+        msg = "[+] Password strength acceptable."
+    password_checks.append(f"Password '{pw}': {msg}")
+    return msg
 
-def generate_report(data, output_text):
+def generate_report(output_text):
     filename = "pentest_report.txt"
     with open(filename, "w") as f:
-        f.write("---- Penetration Test Report ----\n")
-        for line in data:
-            f.write(line + "\n")
-    output_text.insert(tk.END, f"[+] Report saved to {filename}\n")
+        f.write("========= Penetration Test Report =========\n")
+        f.write(f"Generated on: {datetime.now()}\n\n")
 
-def use_c_scanner(ip, port, output_text):
-    if not os.path.exists("./portscanner"):
-        output_text.insert(tk.END, "[-] C scanner not found. Compile 'portscanner.c' first.\n")
-        return
-    try:
-        output = subprocess.check_output(["./portscanner", ip, str(port)]).decode()
-        output_text.insert(tk.END, output.strip() + "\n")
-    except subprocess.CalledProcessError:
-        output_text.insert(tk.END, "[-] C scanner error occurred.\n")
+        f.write("---- Port Scan Results ----\n")
+        for line in scan_results:
+            f.write(line + "\n")
+
+        f.write("\n---- Banner Grabbing Results ----\n")
+        for line in banner_results:
+            f.write(line + "\n")
+
+        f.write("\n---- Vulnerability Results ----\n")
+        for line in vulnerability_results:
+            f.write(line + "\n")
+
+        f.write("\n---- Password Strength Checks ----\n")
+        for line in password_checks:
+            f.write(line + "\n")
+
+    output_text.insert(tk.END, f"\n[✓] Report saved as {filename}\n")
 
 # ---------- GUI Setup ----------
-
 def main_gui():
     root = tk.Tk()
-    root.title("Network Penetration Testing System")
-    root.geometry("700x500")
+    root.title("Advanced Penetration Testing Tool")
+    root.geometry("800x600")
 
-    output_text = scrolledtext.ScrolledText(root, wrap=tk.WORD, width=85, height=25)
+    output_text = scrolledtext.ScrolledText(root, wrap=tk.WORD, width=100, height=30)
     output_text.pack(pady=10)
 
     # --- Buttons ---
+    button_frame = tk.Frame(root)
+    button_frame.pack()
+
     def scan_network():
-        subnet = simpledialog.askstring("Subnet", "Enter subnet (e.g., 192.168.1.0/24):")
+        subnet = simpledialog.askstring("Subnet", "Enter subnet (e.g., 192.168.1.0/30):")
         if subnet:
             threading.Thread(target=scan_ip_range_gui, args=(subnet, output_text)).start()
 
-    def banner_check():
+    def banner_manual():
         ip = simpledialog.askstring("IP Address", "Enter IP address:")
         port = simpledialog.askinteger("Port", "Enter port number:")
         if ip and port:
             banner = banner_grab(ip, port)
             if banner:
                 output_text.insert(tk.END, f"[+] Banner: {banner}\n")
-                result = detect_vulnerabilities(banner)
-                output_text.insert(tk.END, result + "\n")
+                banner_results.append(f"{ip}:{port} => {banner}")
+                vuln = detect_vulnerabilities(banner)
+                if vuln:
+                    output_text.insert(tk.END, f"[!] {vuln}\n")
+                    vulnerability_results.append(f"{ip}:{port} => {vuln}")
+                else:
+                    output_text.insert(tk.END, "[+] No known vulnerabilities found.\n")
             else:
-                output_text.insert(tk.END, "[-] No banner found.\n")
+                output_text.insert(tk.END, "[-] No banner detected.\n")
 
-    def check_password():
+    def password_check():
         pw = simpledialog.askstring("Password", "Enter password to check:")
         if pw:
             result = check_password_strength(pw)
             output_text.insert(tk.END, result + "\n")
 
-    def run_c_scanner():
-        ip = simpledialog.askstring("IP Address", "Enter IP address:")
-        port = simpledialog.askstring("Port", "Enter port number:")
-        if ip and port:
-            use_c_scanner(ip, port, output_text)
+    def generate_final_report():
+        generate_report(output_text)
 
-    def create_sample_report():
-        sample_data = [
-            "Scanned IP: 192.168.1.10",
-            "Open Port: 22 (SSH)",
-            "Banner: OpenSSH 5.3",
-            "Vulnerability: Potential RCE"
-        ]
-        generate_report(sample_data, output_text)
-
-    tk.Button(root, text="Scan IP Range & Ports", command=scan_network).pack(fill=tk.X)
-    tk.Button(root, text="Banner Grab & Vulnerability Check", command=banner_check).pack(fill=tk.X)
-    tk.Button(root, text="Password Strength Checker", command=check_password).pack(fill=tk.X)
-    tk.Button(root, text="Use C-based Port Scanner", command=run_c_scanner).pack(fill=tk.X)
-    tk.Button(root, text="Generate Sample Report", command=create_sample_report).pack(fill=tk.X)
-    tk.Button(root, text="Exit", command=root.quit).pack(fill=tk.X)
+    tk.Button(button_frame, text="1. Scan IP Range & Ports", command=scan_network, width=30).grid(row=0, column=0, padx=5, pady=5)
+    tk.Button(button_frame, text="2. Manual Banner Grab & Vuln Check", command=banner_manual, width=30).grid(row=0, column=1, padx=5, pady=5)
+    tk.Button(button_frame, text="3. Password Strength Checker", command=password_check, width=30).grid(row=1, column=0, padx=5, pady=5)
+    tk.Button(button_frame, text="4. Generate Final Report", command=generate_final_report, width=30).grid(row=1, column=1, padx=5, pady=5)
+    tk.Button(button_frame, text="5. Exit", command=root.quit, width=30, fg="red").grid(row=2, column=0, columnspan=2, pady=10)
 
     root.mainloop()
 
+# ---------- Entry ----------
 if __name__ == "__main__":
-    main_gui()
+     main_gui()
